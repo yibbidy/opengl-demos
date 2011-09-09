@@ -1,15 +1,13 @@
-#version 150
+#version 330
 
 in vec3 position;
 in vec3 normal;
 
-out vec4 color;
-
-uniform mat4 projection;
-uniform mat4 modelview;
+out vec3 out_position;
+out vec3 out_normal;
 
 void main()
 {
-    gl_Position = projection * modelview * vec4(position, 1.);
-    color = vec4(normal, 1.);
+    out_position = position;
+    out_normal = normal;
 }

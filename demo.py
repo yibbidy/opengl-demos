@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
+import random
 import sys
 from math import sin, cos, pi
 import re
@@ -67,6 +68,24 @@ def parse_obj(file_name):
             triangles.append([v0, v1, v2, normal, normal, normal])
     return triangles
 
+def weighted_choice(weights):
+    rnd = random.random() * sum(weights)
+    for i, w in enumerate(weights):
+        rnd -= w
+        if rnd < 0:
+            return i
+
+def triangle_area(v0, v1, v2):
+    '''Heron's formula'''
+    v0 = numpy.array(v0)
+    v1 = numpy.array(v1)
+    v2 = numpy.array(v2)
+    a = sum((v0-v1)**2)**0.5
+    b = sum((v0-v2)**2)**0.5
+    c = sum((v1-v2)**2)**0.5
+    s = (a+b+c) / 2.
+    return (s*(s-a)*(s-b)*(s-c))**0.5
+
 class Demo(QtOpenGL.QGLWidget):
     def __init__(self, parent=None):
         QtOpenGL.QGLWidget.__init__(self, QtOpenGL.QGLFormat(QtOpenGL.QGL.SampleBuffers), parent)
@@ -87,6 +106,15 @@ class Demo(QtOpenGL.QGLWidget):
 
     def initializeGL(self):
         self.makeCurrent()
+
+        # Timer used to measure frame time.
+        self.timer = QElapsedTimer()
+        self.timer.start()
+
+        # Time since the beginning.
+        self.time = QElapsedTimer()
+        self.time.start()
+
         glClearColor(0., 0., 0., 0.)
         glClearDepth(1.0)
         glDepthFunc(GL_LESS)
@@ -96,22 +124,57 @@ class Demo(QtOpenGL.QGLWidget):
         glEnable(GL_MULTISAMPLE)
 
         triangles = parse_obj('house.obj')
-        float_data = []
-        for v0, v1, v2, n0, n1, n2 in triangles:
-            float_data.extend(v0)
-            float_data.extend(n0)
-            float_data.extend(v1)
-            float_data.extend(n1)
-            float_data.extend(v2)
-            float_data.extend(n2)
+        areas = [triangle_area(v0, v1, v2) for v0, v1, v2, _, _, _ in triangles]
+        #areas.sort()
 
-        self.house_buffer = VertexBuffer(numpy.array(float_data, numpy.float32), [(3, GL_FLOAT), (3, GL_FLOAT)])
+        data = []
+        for v0, v1, v2, n0, n1, n2 in triangles:
+            data.extend(v0)
+            data.extend(n0)
+            data.extend(v1)
+            data.extend(n1)
+            data.extend(v2)
+            data.extend(n2)
+
+        self.house_buffer = VertexBuffer(numpy.array(data, numpy.float32), [(3, GL_FLOAT), (3, GL_FLOAT)])
+        self.house_shader = QGLShaderProgram()
+        self.house_shader.addShaderFromSourceFile(QGLShader.Vertex, 'house.vs')
+        self.house_shader.addShaderFromSourceFile(QGLShader.Fragment, 'house.fs')
+        self.house_shader.bindAttributeLocation('position', 0)
+        self.house_shader.bindAttributeLocation('normal', 1)
+        glBindFragDataLocation(self.house_shader.programId(), 0, 'FragColor')
+        if not self.house_shader.link():
+            print('Failed to link house shader!')
+
+        ## Make a house out of points
+        data = []
+        num_points = 10*1000
+        for p in range(num_points):
+            # Select random triangle based on their sizes (larger ones
+            # are more likely to be chosen - guarantees uniform distribution)
+            random_triangle = triangles[weighted_choice(areas)]
+            v0, v1, v2, n0, n1, n2 = map(numpy.array, random_triangle)
+            # Select a random point inside triangle using barycentric coordinates:
+            a = random.random()
+            b = random.random()
+            if a+b > 1.:
+                a = 1-a
+                b = 1-b
+            c = 1-a-b
+            point = a*v0 + b*v1 + c*v2
+            normal = n0
+            data.extend(point)
+            data.extend(normal)
+
+        self.grass_buffer = VertexBuffer(numpy.array(data, numpy.float32), [(3, GL_FLOAT), (3, GL_FLOAT)])
 
         self.grass_shader = QGLShaderProgram()
+        self.grass_shader.addShaderFromSourceFile(QGLShader.Geometry, 'grass.gs')
         self.grass_shader.addShaderFromSourceFile(QGLShader.Vertex, 'grass.vs')
         self.grass_shader.addShaderFromSourceFile(QGLShader.Fragment, 'grass.fs')
         self.grass_shader.bindAttributeLocation('position', 0)
         self.grass_shader.bindAttributeLocation('normal', 1)
+        glBindFragDataLocation(self.grass_shader.programId(), 0, 'FragColor')
 
         if not self.grass_shader.link():
             print('Failed to link grass shader!')
@@ -119,7 +182,7 @@ class Demo(QtOpenGL.QGLWidget):
     def paintGL(self):
         self.makeCurrent()
 
-        speed = 0.05
+        speed = 0.005 * self.timer.restart()
         if self.moving_forward:
             self.camera_position += self.camera_direction * speed
         if self.moving_backwards:
@@ -143,10 +206,19 @@ class Demo(QtOpenGL.QGLWidget):
         translation = QMatrix4x4()
         translation.translate(0, 1, 0)
 
+        ## Solid geometry
+        self.house_shader.bind()
+        self.house_shader.setUniformValue('projection', projection)
+        self.house_shader.setUniformValue('modelview', modelview * translation)
+        self.house_buffer.draw()
+        self.house_shader.release()
+
+        ## Grass on top
         self.grass_shader.bind()
         self.grass_shader.setUniformValue('projection', projection)
         self.grass_shader.setUniformValue('modelview', modelview * translation)
-        self.house_buffer.draw()
+        self.grass_shader.setUniformValue('time', float(self.time.elapsed()))
+        self.grass_buffer.draw(GL_POINTS)
         self.grass_shader.release()
 
         self.draw_grid(projection, modelview)
@@ -167,7 +239,7 @@ class Demo(QtOpenGL.QGLWidget):
 
             self.grid_shader = QGLShaderProgram()
             self.grid_shader.addShaderFromSourceCode(QGLShader.Vertex,
-                '''
+                '''#version 330
                 in vec3 position;
 
                 uniform mat4 projection, modelview;
@@ -178,13 +250,17 @@ class Demo(QtOpenGL.QGLWidget):
                 }
                 ''')
             self.grid_shader.addShaderFromSourceCode(QGLShader.Fragment,
-                '''
+                '''#version 330
+
+                out vec4 FragColor;
+
                 void main()
                 {
-                    gl_FragColor = vec4(1., 1., 1., 1.);
+                    FragColor = vec4(1., 1., 1., 1.);
                 }
                 ''')
             self.grid_shader.bindAttributeLocation('position', 0)
+            glBindFragDataLocation(self.grid_shader.programId(), 0, 'FragColor')
             if not self.grid_shader.link():
                 print('Failed to link grid shader!')
 
