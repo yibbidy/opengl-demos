@@ -125,7 +125,6 @@ class Demo(QtOpenGL.QGLWidget):
 
         triangles = parse_obj('house.obj')
         areas = [triangle_area(v0, v1, v2) for v0, v1, v2, _, _, _ in triangles]
-        #areas.sort()
 
         data = []
         for v0, v1, v2, n0, n1, n2 in triangles:
@@ -148,7 +147,7 @@ class Demo(QtOpenGL.QGLWidget):
 
         ## Make a house out of points
         data = []
-        num_points = 10*1000
+        num_points = 100*1000
         for p in range(num_points):
             # Select random triangle based on their sizes (larger ones
             # are more likely to be chosen - guarantees uniform distribution)
@@ -299,8 +298,8 @@ class Demo(QtOpenGL.QGLWidget):
         dx = event.globalX() - x
         dy = event.globalY() - y
 
-        self.yaw += dx/100.
-        self.pitch -= dy/100.
+        self.yaw += dx/200.
+        self.pitch -= dy/200.
         self.pitch = clamp(self.pitch, -pi/2, pi/2)
         self.camera_direction = QVector3D(cos(self.yaw), sin(self.pitch), sin(self.yaw)).normalized()
 
