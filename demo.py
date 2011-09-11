@@ -17,6 +17,9 @@ OpenGL.ERROR_LOGGING = True
 OpenGL.FULL_LOGGING = True
 from OpenGL.GL import *
 from OpenGL.GLU import *
+from OpenGL.GL.ARB.depth_texture import *
+from OpenGL.GL.ARB.shadow import *
+from OpenGL.GL.framebufferobjects import *
 
 import numpy
 
@@ -43,9 +46,9 @@ def normal_from_points(p1, p2, p3):
 
 def parse_obj(file_name):
     lines = open(file_name).readlines()
-    normals_lines =  filter(lambda line: line.startswith('vn'), lines)
-    vertices_lines = filter(lambda line: line.startswith('v'), lines)
-    faces_lines =    filter(lambda line: line.startswith('f'), lines)
+    normals_lines =  filter(lambda line: line.startswith('vn '), lines)
+    vertices_lines = filter(lambda line: line.startswith('v '), lines)
+    faces_lines =    filter(lambda line: line.startswith('f '), lines)
     normals =  [map(float, line.split()[1:]) for line in normals_lines]
     vertices = [map(float, line.split()[1:]) for line in vertices_lines]
     if len(normals) > 0:
@@ -123,8 +126,8 @@ class Demo(QtOpenGL.QGLWidget):
         glDisable(GL_CULL_FACE)
         glEnable(GL_MULTISAMPLE)
 
+        ## Solid house geometry:
         triangles = parse_obj('house.obj')
-        areas = [triangle_area(v0, v1, v2) for v0, v1, v2, _, _, _ in triangles]
 
         data = []
         for v0, v1, v2, n0, n1, n2 in triangles:
@@ -147,7 +150,8 @@ class Demo(QtOpenGL.QGLWidget):
 
         ## Make a house out of points
         data = []
-        num_points = 100*1000
+        num_points = 10*1000
+        areas = [triangle_area(v0, v1, v2) for v0, v1, v2, _, _, _ in triangles]
         for p in range(num_points):
             # Select random triangle based on their sizes (larger ones
             # are more likely to be chosen - guarantees uniform distribution)
@@ -178,6 +182,67 @@ class Demo(QtOpenGL.QGLWidget):
         if not self.grass_shader.link():
             print('Failed to link grass shader!')
 
+        ## Plane below the house
+        data = [-10, 0, -10,
+                -10, 0,  10,
+                 10, 0,  10,
+                -10, 0, -10,
+                 10, 0,  10,
+                 10, 0, -10,]
+
+        self.plane_buffer = VertexBuffer(numpy.array(data, numpy.float32), [(3, GL_FLOAT)])
+
+        self.plane_shader = QGLShaderProgram()
+        self.plane_shader.addShaderFromSourceFile(QGLShader.Vertex, 'plane.vs')
+        self.plane_shader.addShaderFromSourceFile(QGLShader.Fragment, 'plane.fs')
+        self.plane_shader.bindAttributeLocation('position', 0)
+        glBindFragDataLocation(self.plane_shader.programId(), 0, 'FragColor')
+
+        if not self.plane_shader.link():
+            print('Failed to link plane shader!')
+
+        ## Set up shadows:
+        self.shadow_map_width = 1024
+        self.shadow_map_height = 1024
+
+        self.depth_texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, self.depth_texture)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP)
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP)
+        #glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE)
+        #glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LESS)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+                     self.shadow_map_width, self.shadow_map_height, 0,
+                     GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, 0)
+        glBindTexture(GL_TEXTURE_2D, 0)
+
+        self.shadow_fbo = glGenFramebuffers(1)
+        glBindFramebuffer(GL_FRAMEBUFFER, self.shadow_fbo)
+        glDrawBuffer(GL_NONE)
+        glReadBuffer(GL_NONE)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, self.depth_texture, 0)
+        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+        if GL_FRAMEBUFFER_COMPLETE != status:
+            print('Shadow FBO invalid!')
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+        # And some matrices
+        self.shadow_projection = QMatrix4x4()
+        self.shadow_projection.ortho(-3, 3, -3, 3, -1, 100);
+
+        self.shadow_modelview = QMatrix4x4()
+        self.shadow_modelview.lookAt(
+            QVector3D(-5, 5, -5),
+            QVector3D(0, 0, 0),
+            QVector3D(0, 1, 0))
+
+        translation = QMatrix4x4()
+        translation.translate(0, 1, 0)
+        self.shadow_modelview *= translation;
+
     def paintGL(self):
         self.makeCurrent()
 
@@ -191,6 +256,12 @@ class Demo(QtOpenGL.QGLWidget):
         if self.moving_right:
             self.camera_position += QVector3D.crossProduct(self.camera_direction, QVector3D(0, 1, 0)).normalized() * speed
 
+        frame_diff = self.time.elapsed()
+
+        ## Shadow pass first
+        self.draw_shadow(frame_diff)
+
+        ## Main pass
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
         glEnable(GL_DEPTH_TEST)
 
@@ -205,7 +276,7 @@ class Demo(QtOpenGL.QGLWidget):
         translation = QMatrix4x4()
         translation.translate(0, 1, 0)
 
-        ## Solid geometry
+        ## Solid geometry of da house
         self.house_shader.bind()
         self.house_shader.setUniformValue('projection', projection)
         self.house_shader.setUniformValue('modelview', modelview * translation)
@@ -216,79 +287,125 @@ class Demo(QtOpenGL.QGLWidget):
         self.grass_shader.bind()
         self.grass_shader.setUniformValue('projection', projection)
         self.grass_shader.setUniformValue('modelview', modelview * translation)
-        self.grass_shader.setUniformValue('time', float(self.time.elapsed()))
+        self.grass_shader.setUniformValue('time', float(frame_diff))
         self.grass_buffer.draw(GL_POINTS)
         self.grass_shader.release()
 
-        self.draw_grid(projection, modelview)
+        ## Plane
+        self.plane_shader.bind()
+        self.plane_shader.setUniformValue('projection', projection)
+        self.plane_shader.setUniformValue('modelview', modelview)
+        glActiveTexture(GL_TEXTURE0 + 0)
+        glBindTexture(GL_TEXTURE_2D, self.depth_texture)
+        self.plane_shader.setUniformValue('depth', 0)
+        self.plane_shader.setUniformValue('shadow_projection', self.shadow_projection)
+        self.plane_shader.setUniformValue('shadow_modelview', self.shadow_modelview)
+        bias = QMatrix4x4(
+            0.5, 0.0, 0.0, 0.0,
+            0.0, 0.5, 0.0, 0.0,
+            0.0, 0.0, 0.5, 0.0,
+            0.5, 0.5, 0.5, 1.0)
+        bias = QMatrix4x4()
+        self.plane_shader.setUniformValue('bias', bias)
+        self.plane_buffer.draw()
+        self.plane_shader.release()
 
         self.update()
 
-    def draw_grid(self, projection, modelview):
-        if not hasattr(self, 'grid_buffer'):
-            unit = 1.
-            count = 20
-            data = []
-            for i in range(-count, count+1):
-                data.extend([-count*unit, 0, i*unit,
-                              count*unit, 0, i*unit])
-                data.extend([i*unit, 0, -count*unit,
-                             i*unit, 0,  count*unit])
-            self.grid_buffer = VertexBuffer(numpy.array(data, numpy.float32), [(3, GL_FLOAT)])
+    def draw_shadow(self, frame_diff):
+        glBindFramebuffer(GL_FRAMEBUFFER, self.shadow_fbo)
+        glPushAttrib(GL_VIEWPORT_BIT)
+        glViewport(0, 0, self.shadow_map_width, self.shadow_map_height)
+        glClear(GL_DEPTH_BUFFER_BIT)
+        glEnable(GL_DEPTH_TEST)
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE)
 
-            self.grid_shader = QGLShaderProgram()
-            self.grid_shader.addShaderFromSourceCode(QGLShader.Vertex,
-                '''#version 330
-                in vec3 position;
+        self.house_shader.bind()
+        self.house_shader.setUniformValue('projection', self.shadow_projection)
+        self.house_shader.setUniformValue('modelview', self.shadow_modelview)
+        self.house_buffer.draw()
+        self.house_shader.release()
 
-                uniform mat4 projection, modelview;
+        self.grass_shader.bind()
+        self.grass_shader.setUniformValue('projection', self.shadow_projection)
+        self.grass_shader.setUniformValue('modelview', self.shadow_modelview)
+        self.grass_shader.setUniformValue('time', float(frame_diff))
+        self.grass_buffer.draw(GL_POINTS)
+        self.grass_shader.release()
 
-                void main()
-                {
-                    gl_Position = projection * modelview * vec4(position, 1.);
-                }
-                ''')
-            self.grid_shader.addShaderFromSourceCode(QGLShader.Fragment,
-                '''#version 330
+        glPopAttrib()
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE)
 
-                out vec4 FragColor;
+    #def draw_grid(self, projection, modelview):
+        #if not hasattr(self, 'grid_buffer'):
+            #unit = 1.
+            #count = 20
+            #data = []
+            #for i in range(-count, count+1):
+                #data.extend([-count*unit, 0, i*unit,
+                              #count*unit, 0, i*unit])
+                #data.extend([i*unit, 0, -count*unit,
+                             #i*unit, 0,  count*unit])
+            #self.grid_buffer = VertexBuffer(numpy.array(data, numpy.float32), [(3, GL_FLOAT)])
 
-                void main()
-                {
-                    FragColor = vec4(1., 1., 1., 1.);
-                }
-                ''')
-            self.grid_shader.bindAttributeLocation('position', 0)
-            glBindFragDataLocation(self.grid_shader.programId(), 0, 'FragColor')
-            if not self.grid_shader.link():
-                print('Failed to link grid shader!')
+            #self.grid_shader = QGLShaderProgram()
+            #self.grid_shader.addShaderFromSourceCode(QGLShader.Vertex,
+                #'''#version 330
+                #in vec3 position;
 
-        self.grid_shader.bind()
-        self.grid_shader.setUniformValue('projection', projection)
-        self.grid_shader.setUniformValue('modelview', modelview)
-        self.grid_buffer.draw(GL_LINES)
-        self.grid_shader.release()
+                #uniform mat4 projection, modelview;
+
+                #void main()
+                #{
+                    #gl_Position = projection * modelview * vec4(position, 1.);
+                #}
+                #''')
+            #self.grid_shader.addShaderFromSourceCode(QGLShader.Fragment,
+                #'''#version 330
+
+                #out vec4 FragColor;
+
+                #void main()
+                #{
+                    #FragColor = vec4(1., 1., 1., 1.);
+                #}
+                #''')
+            #self.grid_shader.bindAttributeLocation('position', 0)
+            #glBindFragDataLocation(self.grid_shader.programId(), 0, 'FragColor')
+            #if not self.grid_shader.link():
+                #print('Failed to link grid shader!')
+
+        #self.grid_shader.bind()
+        #self.grid_shader.setUniformValue('projection', projection)
+        #self.grid_shader.setUniformValue('modelview', modelview)
+        #self.grid_buffer.draw(GL_LINES)
+        #self.grid_shader.release()
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
+        key = event.key()
+        if key == Qt.Key_Escape:
             self.close() # TODO
-        elif event.key() == Qt.Key_W:
+        elif key == Qt.Key_W:
             self.moving_forward = True
-        elif event.key() == Qt.Key_S:
+        elif key == Qt.Key_S:
             self.moving_backwards = True
-        elif event.key() == Qt.Key_A:
+        elif key == Qt.Key_A:
             self.moving_left = True
-        elif event.key() == Qt.Key_D:
+        elif key == Qt.Key_D:
             self.moving_right = True
+        elif key == Qt.Key_Space:
+            print(self.camera_position, self.camera_direction)
 
     def keyReleaseEvent(self, event):
-        if event.key() == Qt.Key_W:
+        key = event.key()
+        if key == Qt.Key_W:
             self.moving_forward = False
-        elif event.key() == Qt.Key_S:
+        elif key == Qt.Key_S:
             self.moving_backwards = False
-        elif event.key() == Qt.Key_A:
+        elif key == Qt.Key_A:
             self.moving_left = False
-        elif event.key() == Qt.Key_D:
+        elif key == Qt.Key_D:
             self.moving_right = False
 
     def mouseMoveEvent(self, event):
