@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+
 # encoding: utf-8
 
 import random
@@ -120,7 +121,7 @@ class Demo(QtOpenGL.QGLWidget):
         self.time.start()
 
         glClearColor(0., 0., 0., 0.)
-        glClearDepth(1.0)
+        glClearDepth(1.)
         glDepthFunc(GL_LESS)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_LINE_SMOOTH)
@@ -145,7 +146,7 @@ class Demo(QtOpenGL.QGLWidget):
         self.house_shader.addShaderFromSourceFile(QGLShader.Fragment, 'house.fs')
         self.house_shader.bindAttributeLocation('position', 0)
         self.house_shader.bindAttributeLocation('normal', 1)
-        glBindFragDataLocation(self.house_shader.programId(), 0, 'FragColor')
+        glBindFragDataLocation(self.house_shader.programId(), 0, 'frag_color')
         if not self.house_shader.link():
             print('Failed to link house shader!')
 
@@ -178,7 +179,7 @@ class Demo(QtOpenGL.QGLWidget):
         self.grass_shader.addShaderFromSourceFile(QGLShader.Fragment, 'grass.fs')
         self.grass_shader.bindAttributeLocation('position', 0)
         self.grass_shader.bindAttributeLocation('normal', 1)
-        glBindFragDataLocation(self.grass_shader.programId(), 0, 'FragColor')
+        glBindFragDataLocation(self.grass_shader.programId(), 0, 'frag_color')
 
         if not self.grass_shader.link():
             print('Failed to link grass shader!')
@@ -197,7 +198,7 @@ class Demo(QtOpenGL.QGLWidget):
         self.plane_shader.addShaderFromSourceFile(QGLShader.Vertex, 'plane.vs')
         self.plane_shader.addShaderFromSourceFile(QGLShader.Fragment, 'plane.fs')
         self.plane_shader.bindAttributeLocation('position', 0)
-        glBindFragDataLocation(self.plane_shader.programId(), 0, 'FragColor')
+        glBindFragDataLocation(self.plane_shader.programId(), 0, 'frag_color')
 
         if not self.plane_shader.link():
             print('Failed to link plane shader!')
@@ -208,13 +209,12 @@ class Demo(QtOpenGL.QGLWidget):
 
         self.depth_texture = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, self.depth_texture)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP)
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP)
-        #glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE)
-        #glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LESS)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, numpy.array([1., 1., 1., 1.], dtype=GLfloat))
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32,
                      self.shadow_map_width, self.shadow_map_height, 0,
                      GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, 0)
         glBindTexture(GL_TEXTURE_2D, 0)
@@ -232,17 +232,13 @@ class Demo(QtOpenGL.QGLWidget):
 
         # And some matrices
         self.shadow_projection = QMatrix4x4()
-        self.shadow_projection.ortho(-3, 3, -3, 3, -1, 100);
+        self.shadow_projection.ortho(-2.5, 2.5, -2.5, 2.5, 1, 10);
 
         self.shadow_modelview = QMatrix4x4()
         self.shadow_modelview.lookAt(
-            QVector3D(-5, 5, -5),
-            QVector3D(0, 0, 0),
+            QVector3D(3, 6, 3),
+            QVector3D(0, 1, 0),
             QVector3D(0, 1, 0))
-
-        translation = QMatrix4x4()
-        translation.translate(0, 1, 0)
-        self.shadow_modelview *= translation;
 
     def paintGL(self):
         self.makeCurrent()
@@ -263,6 +259,7 @@ class Demo(QtOpenGL.QGLWidget):
         self.draw_shadow(frame_diff)
 
         ## Main pass
+        glClearDepth(1.)
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
         glEnable(GL_DEPTH_TEST)
 
@@ -274,20 +271,33 @@ class Demo(QtOpenGL.QGLWidget):
                          self.camera_position+self.camera_direction,
                          QVector3D(0, 1, 0))
 
-        translation = QMatrix4x4()
-        translation.translate(0, 1, 0)
+        bias = QMatrix4x4(
+            0.5, 0.0, 0.0, 0.5,
+            0.0, 0.5, 0.0, 0.5,
+            0.0, 0.0, 0.5, 0.5,
+            0.0, 0.0, 0.0, 1.0)
 
+        glActiveTexture(GL_TEXTURE0 + 0)
+        glBindTexture(GL_TEXTURE_2D, self.depth_texture)
+
+        glEnable(GL_CULL_FACE)
+        glCullFace(GL_BACK)
         ## Solid geometry of da house
         self.house_shader.bind()
         self.house_shader.setUniformValue('projection', projection)
-        self.house_shader.setUniformValue('modelview', modelview * translation)
+        self.house_shader.setUniformValue('modelview', modelview)
+        self.house_shader.setUniformValue('depth', 0)
+        self.house_shader.setUniformValue('shadow_projection', self.shadow_projection)
+        self.house_shader.setUniformValue('shadow_modelview', self.shadow_modelview)
+        self.house_shader.setUniformValue('bias', bias)
         self.house_buffer.draw()
         self.house_shader.release()
+        glDisable(GL_CULL_FACE)
 
         ## Grass on top
         self.grass_shader.bind()
         self.grass_shader.setUniformValue('projection', projection)
-        self.grass_shader.setUniformValue('modelview', modelview * translation)
+        self.grass_shader.setUniformValue('modelview', modelview)
         self.grass_shader.setUniformValue('time', float(frame_diff))
         self.grass_buffer.draw(GL_POINTS)
         self.grass_shader.release()
@@ -296,17 +306,9 @@ class Demo(QtOpenGL.QGLWidget):
         self.plane_shader.bind()
         self.plane_shader.setUniformValue('projection', projection)
         self.plane_shader.setUniformValue('modelview', modelview)
-        glActiveTexture(GL_TEXTURE0 + 0)
-        glBindTexture(GL_TEXTURE_2D, self.depth_texture)
         self.plane_shader.setUniformValue('depth', 0)
         self.plane_shader.setUniformValue('shadow_projection', self.shadow_projection)
         self.plane_shader.setUniformValue('shadow_modelview', self.shadow_modelview)
-        bias = QMatrix4x4(
-            0.5, 0.0, 0.0, 0.0,
-            0.0, 0.5, 0.0, 0.0,
-            0.0, 0.0, 0.5, 0.0,
-            0.5, 0.5, 0.5, 1.0)
-        bias = QMatrix4x4()
         self.plane_shader.setUniformValue('bias', bias)
         self.plane_buffer.draw()
         self.plane_shader.release()
@@ -316,15 +318,19 @@ class Demo(QtOpenGL.QGLWidget):
     def draw_shadow(self, frame_diff):
         glBindFramebuffer(GL_FRAMEBUFFER, self.shadow_fbo)
         glViewport(0, 0, self.shadow_map_width, self.shadow_map_height)
+        glClearDepth(1.)
         glClear(GL_DEPTH_BUFFER_BIT)
         glEnable(GL_DEPTH_TEST)
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE)
 
+        glEnable(GL_CULL_FACE)
+        glCullFace(GL_FRONT)
         self.house_shader.bind()
         self.house_shader.setUniformValue('projection', self.shadow_projection)
         self.house_shader.setUniformValue('modelview', self.shadow_modelview)
         self.house_buffer.draw()
         self.house_shader.release()
+        glDisable(GL_CULL_FACE)
 
         self.grass_shader.bind()
         self.grass_shader.setUniformValue('projection', self.shadow_projection)
@@ -370,6 +376,7 @@ class Demo(QtOpenGL.QGLWidget):
         dx = event.globalX() - x
         dy = event.globalY() - y
 
+        # TODO: smooth mouse
         self.yaw += dx/200.
         self.pitch -= dy/200.
         self.pitch = clamp(self.pitch, -pi/2, pi/2)
