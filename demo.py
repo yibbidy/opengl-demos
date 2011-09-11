@@ -15,6 +15,7 @@ import OpenGL
 OpenGL.ERROR_CHECKING = True
 OpenGL.ERROR_LOGGING = True
 OpenGL.FULL_LOGGING = True
+OpenGL.FORWARD_COMPATIBLE_ONLY = True # TODO: doesn't seem to make a difference
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GL.ARB.depth_texture import *
@@ -314,7 +315,6 @@ class Demo(QtOpenGL.QGLWidget):
 
     def draw_shadow(self, frame_diff):
         glBindFramebuffer(GL_FRAMEBUFFER, self.shadow_fbo)
-        glPushAttrib(GL_VIEWPORT_BIT)
         glViewport(0, 0, self.shadow_map_width, self.shadow_map_height)
         glClear(GL_DEPTH_BUFFER_BIT)
         glEnable(GL_DEPTH_TEST)
@@ -333,9 +333,9 @@ class Demo(QtOpenGL.QGLWidget):
         self.grass_buffer.draw(GL_POINTS)
         self.grass_shader.release()
 
-        glPopAttrib()
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE)
+        glViewport(0, 0, self.width(), self.height())
 
     #def draw_grid(self, projection, modelview):
         #if not hasattr(self, 'grid_buffer'):
