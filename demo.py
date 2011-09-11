@@ -337,51 +337,6 @@ class Demo(QtOpenGL.QGLWidget):
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE)
         glViewport(0, 0, self.width(), self.height())
 
-    #def draw_grid(self, projection, modelview):
-        #if not hasattr(self, 'grid_buffer'):
-            #unit = 1.
-            #count = 20
-            #data = []
-            #for i in range(-count, count+1):
-                #data.extend([-count*unit, 0, i*unit,
-                              #count*unit, 0, i*unit])
-                #data.extend([i*unit, 0, -count*unit,
-                             #i*unit, 0,  count*unit])
-            #self.grid_buffer = VertexBuffer(numpy.array(data, numpy.float32), [(3, GL_FLOAT)])
-
-            #self.grid_shader = QGLShaderProgram()
-            #self.grid_shader.addShaderFromSourceCode(QGLShader.Vertex,
-                #'''#version 330
-                #in vec3 position;
-
-                #uniform mat4 projection, modelview;
-
-                #void main()
-                #{
-                    #gl_Position = projection * modelview * vec4(position, 1.);
-                #}
-                #''')
-            #self.grid_shader.addShaderFromSourceCode(QGLShader.Fragment,
-                #'''#version 330
-
-                #out vec4 FragColor;
-
-                #void main()
-                #{
-                    #FragColor = vec4(1., 1., 1., 1.);
-                #}
-                #''')
-            #self.grid_shader.bindAttributeLocation('position', 0)
-            #glBindFragDataLocation(self.grid_shader.programId(), 0, 'FragColor')
-            #if not self.grid_shader.link():
-                #print('Failed to link grid shader!')
-
-        #self.grid_shader.bind()
-        #self.grid_shader.setUniformValue('projection', projection)
-        #self.grid_shader.setUniformValue('modelview', modelview)
-        #self.grid_buffer.draw(GL_LINES)
-        #self.grid_shader.release()
-
     def keyPressEvent(self, event):
         key = event.key()
         if key == Qt.Key_Escape:
