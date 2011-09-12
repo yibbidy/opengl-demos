@@ -14,7 +14,7 @@ void main()
     float shadow = 1.0;
     if (shadow_coords.w > 0.0 &&
         shadow_coords.s > 0.0 && shadow_coords.s < 1.0 &&
-        shadow_coords.t > 0.0 && shadow_coords.t < 1.0) // TODO: this shouldnt be necessary!
+        shadow_coords.t > 0.0 && shadow_coords.t < 1.0) // TODO: this shouldn't be necessary!
         shadow = distance_from_light < shadow_coords_w_div.z ? 0.7 : 1.0;
     // A completely-genuine darkening effect
     float ambient = pow(max(abs(plane_coords.x), abs(plane_coords.y)), 0.05);

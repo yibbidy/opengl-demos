@@ -6,10 +6,15 @@ layout(triangle_strip, max_vertices=3) out;
 in vec3 out_position[1];
 in vec3 out_normal[1];
 
+out vec4 shadow_coords;
+out vec3 blade_normal;
 out vec4 color;
 
-uniform mat4 projection, modelview;
+uniform mat4 mvp;
+uniform mat4 shadow_mvp;
 uniform float time;
+uniform vec3 camera_right;
+uniform bool color_normal;
 
 //
 // Description : Array and textureless GLSL 2D/3D/4D simplex 
@@ -63,7 +68,7 @@ float snoise(vec3 v)
 
     // Permutations
     i = mod289(i); 
-    vec4 p = permute( permute( permute( 
+    vec4 p = permute(permute(permute(
              i.z + vec4(0.0, i1.z, i2.z, 1.0))
            + i.y + vec4(0.0, i1.y, i2.y, 1.0)) 
            + i.x + vec4(0.0, i1.x, i2.x, 1.0));
@@ -76,7 +81,7 @@ float snoise(vec3 v)
     vec4 j = p - 49.0 * floor(p * ns.z * ns.z);  //  mod(p,7*7)
 
     vec4 x_ = floor(j * ns.z);
-    vec4 y_ = floor(j - 7.0 * x_ );    // mod(j,N)
+    vec4 y_ = floor(j - 7.0 * x_);    // mod(j,N)
 
     vec4 x = x_ *ns.x + ns.yyyy;
     vec4 y = y_ *ns.x + ns.yyyy;
@@ -111,39 +116,42 @@ float snoise(vec3 v)
                                 dot(p2,x2), dot(p3,x3)));
 }
 
-void emit(vec3 position0, vec3 color0,
-          vec3 position1, vec3 color1,
-          vec3 position2, vec3 color2)
+void emit(vec3 position0, vec4 color0,
+          vec3 position1, vec4 color1,
+          vec3 position2, vec4 color2)
 {
-    mat4 mvp = projection * modelview;
-
     gl_Position = mvp * vec4(position0, 1.);
-    color = vec4(color0, 1.);
+    shadow_coords = shadow_mvp * vec4(position0, 1.);
+    color = color0;
     EmitVertex();
+
     gl_Position = mvp * vec4(position1, 1.);
-    color = vec4(color1, 1.);
+    shadow_coords = shadow_mvp * vec4(position1, 1.);
+    color = color1;
     EmitVertex();
+
     gl_Position = mvp * vec4(position2, 1.);
-    color = vec4(color2, 1.);
+    shadow_coords = shadow_mvp * vec4(position2, 1.);
+    color = color2;
     EmitVertex();
+
     EndPrimitive();
 }
 
 void main()
 {
-    // Add some noise to normal
-    //vec3 normal = normalize(out_normal[0] + snoise(out_position[0]*10) + snoise(out_position[0]+time / 3000.));
+    // Semi-randomly move the tip of grass blade (which is just a triangle):
     vec3 x = normalize(cross(out_normal[0], normalize(vec3(0.49, 0.42, 0.78))));
     vec3 y = normalize(cross(out_normal[0], x));
-    vec3 normal = normalize(out_normal[0] + x*(snoise(out_position[0]*10) + snoise(out_position[0] + time / 3000.)*3) +
-                                            y*(snoise(out_position[0]*4)  + snoise(x + time / 3000.)*3));
-    vec3 right = normalize(cross(normal, normalize(vec3(snoise(out_position[0]),
-                                                        snoise(out_position[0]*3),
-                                                        snoise(out_position[0]*10)))));
-    const float size = 0.005;
-    const float part_length = 10.*size*(1. + snoise(out_position[0])/2.);
+    vec3 normal = normalize(out_normal[0] + x*(snoise(out_position[0]*10.) + snoise(out_position[0] + time / 3000.)*2.) +
+                                            y*(snoise(out_position[0]*4.)  + snoise(x + time / 3000.)*2.));
+    const float size = 0.004;
+    const float part_length = 10.*size*(1. + snoise(out_position[0])/1.5);
 
-    emit(out_position[0]+right*size, normal,
-         out_position[0]-right*size, normal,
-         out_position[0]+normal*part_length*3, normal);
+    vec4 bottom_color = color_normal ? vec4(normal, 1.) : vec4(0.1, 0.7, 0.1, 1.);
+    vec4 top_color = color_normal ? vec4(normal, 1.) : vec4(0.9, 0.8, 0.3, 1.);
+
+    emit(out_position[0]+camera_right*size, bottom_color,
+         out_position[0]-camera_right*size, bottom_color,
+         out_position[0]+normal*part_length*3, top_color);
 }

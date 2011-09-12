@@ -106,6 +106,8 @@ class Demo(QtOpenGL.QGLWidget):
         self.moving_left = False
         self.moving_right = False
 
+        self.color_normal = False
+
     def resizeGL(self, width, height):
         pass
 
@@ -120,13 +122,11 @@ class Demo(QtOpenGL.QGLWidget):
         self.time = QElapsedTimer()
         self.time.start()
 
-        glClearColor(0., 0., 0., 0.)
+        self.frame_number = 0
+
+        glClearColor(1., 1., 1., 1.)
         glClearDepth(1.)
-        glDepthFunc(GL_LESS)
         glEnable(GL_DEPTH_TEST)
-        glEnable(GL_LINE_SMOOTH)
-        glDisable(GL_CULL_FACE)
-        glEnable(GL_MULTISAMPLE)
 
         ## Solid house geometry:
         triangles = parse_obj('house.obj')
@@ -152,7 +152,7 @@ class Demo(QtOpenGL.QGLWidget):
 
         ## Make a house out of points
         data = []
-        num_points = 10*1000
+        num_points = 100*1000
         areas = [triangle_area(v0, v1, v2) for v0, v1, v2, _, _, _ in triangles]
         for p in range(num_points):
             # Select random triangle based on their sizes (larger ones
@@ -230,7 +230,17 @@ class Demo(QtOpenGL.QGLWidget):
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
-        # And some matrices
+        ## Dummy shader which does transforms only
+        self.plain_shader = QGLShaderProgram()
+        self.plain_shader.addShaderFromSourceFile(QGLShader.Vertex, 'plain.vs')
+        self.plain_shader.addShaderFromSourceFile(QGLShader.Fragment, 'plain.fs')
+        self.plain_shader.bindAttributeLocation('position', 0)
+        self.plain_shader.bindAttributeLocation('normal', 1)
+        glBindFragDataLocation(self.plain_shader.programId(), 0, 'frag_color')
+        if not self.plain_shader.link():
+            print('Failed to link plain shader!')
+
+        ## And some matrices
         self.shadow_projection = QMatrix4x4()
         self.shadow_projection.ortho(-2.5, 2.5, -2.5, 2.5, 1, 10);
 
@@ -254,9 +264,13 @@ class Demo(QtOpenGL.QGLWidget):
             self.camera_position += QVector3D.crossProduct(self.camera_direction, QVector3D(0, 1, 0)).normalized() * speed
 
         frame_diff = self.time.elapsed()
+        self.camera_right = QVector3D.crossProduct(self.camera_direction, QVector3D(0, 1, 0)).normalized();
 
-        ## Shadow pass first
-        self.draw_shadow(frame_diff)
+        ## Shadow pass first (every second frame only)
+        if self.frame_number % 2 == 0:
+            self.draw_shadow(frame_diff)
+
+        self.frame_number += 1
 
         ## Main pass
         glClearDepth(1.)
@@ -280,9 +294,9 @@ class Demo(QtOpenGL.QGLWidget):
         glActiveTexture(GL_TEXTURE0 + 0)
         glBindTexture(GL_TEXTURE_2D, self.depth_texture)
 
+        ## Solid geometry of da house
         glEnable(GL_CULL_FACE)
         glCullFace(GL_BACK)
-        ## Solid geometry of da house
         self.house_shader.bind()
         self.house_shader.setUniformValue('projection', projection)
         self.house_shader.setUniformValue('modelview', modelview)
@@ -296,9 +310,13 @@ class Demo(QtOpenGL.QGLWidget):
 
         ## Grass on top
         self.grass_shader.bind()
-        self.grass_shader.setUniformValue('projection', projection)
-        self.grass_shader.setUniformValue('modelview', modelview)
+        self.grass_shader.setUniformValue('color_normal', self.color_normal)
+        self.grass_shader.setUniformValue('shadows', True)
+        self.grass_shader.setUniformValue('mvp', projection * modelview)
+        self.grass_shader.setUniformValue('depth', 0)
+        self.grass_shader.setUniformValue('shadow_mvp', bias * self.shadow_projection * self.shadow_modelview)
         self.grass_shader.setUniformValue('time', float(frame_diff))
+        self.grass_shader.setUniformValue('camera_right', self.camera_right)
         self.grass_buffer.draw(GL_POINTS)
         self.grass_shader.release()
 
@@ -325,17 +343,18 @@ class Demo(QtOpenGL.QGLWidget):
 
         glEnable(GL_CULL_FACE)
         glCullFace(GL_FRONT)
-        self.house_shader.bind()
-        self.house_shader.setUniformValue('projection', self.shadow_projection)
-        self.house_shader.setUniformValue('modelview', self.shadow_modelview)
+        self.plain_shader.bind()
+        self.plain_shader.setUniformValue('projection', self.shadow_projection)
+        self.plain_shader.setUniformValue('modelview', self.shadow_modelview)
         self.house_buffer.draw()
-        self.house_shader.release()
+        self.plain_shader.release()
         glDisable(GL_CULL_FACE)
 
         self.grass_shader.bind()
-        self.grass_shader.setUniformValue('projection', self.shadow_projection)
-        self.grass_shader.setUniformValue('modelview', self.shadow_modelview)
+        self.grass_shader.setUniformValue('shadows', False)
+        self.grass_shader.setUniformValue('mvp', self.shadow_projection * self.shadow_modelview)
         self.grass_shader.setUniformValue('time', float(frame_diff))
+        self.grass_shader.setUniformValue('camera_right', self.camera_right)
         self.grass_buffer.draw(GL_POINTS)
         self.grass_shader.release()
 
@@ -356,7 +375,7 @@ class Demo(QtOpenGL.QGLWidget):
         elif key == Qt.Key_D:
             self.moving_right = True
         elif key == Qt.Key_Space:
-            print(self.camera_position, self.camera_direction)
+            self.color_normal = not self.color_normal
 
     def keyReleaseEvent(self, event):
         key = event.key()
