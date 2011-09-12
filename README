@@ -15,3 +15,10 @@ Transform cache demo instead stores produced geometry in a VBO (no copying to RA
 then renders that directly. The last demo runs fastest On My System, but instancing is only a bit slower.
 
 TODO: write some more
+
+## Grass House Demo ##
+
+![Grass House screenshot](http://matejd.github.com/OpenGL-proof-of-concepts/grass-house.png)
+
+
+
