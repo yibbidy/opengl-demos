@@ -5,7 +5,7 @@ Proof-of-concept little OpenGL programs
 
 ![Grass House screenshot](http://matejd.github.com/OpenGL-proof-of-concepts/grass-house.png)
 
-Small weekend demo that didn't turn out so well. Read more [here](http://matejd.github.com/grass_house_demo_geometry_shaders_glsl_noise_shadow_mapping).
+Small weekend demo that didn't turn out so well. Read more [here](http://matejd.github.com/#grass_house_demo_geometry_shaders_glsl_noise_shadow_mapping).
 
 ## Research demos ##
 
